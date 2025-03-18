@@ -1,0 +1,45 @@
+name: build main action
+concurrency:
+  group: build-main-action
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - src/**/*
+      - package*.json
+      - src/*.js
+      - .github/workflows/build-main-action.yaml
+
+permissions:
+  contents: write
+
+env:
+  AUTHOR_EMAIL: admin+github-actions@tapclap.com
+  AUTHOR_NAME: 'Github Actions'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@main
+      - uses: actions/setup-node@main
+        with:
+          node-version: 20
+
+      - name: node modules
+        run: npm ci
+
+      - name: build
+        run: npm run build
+
+      - name: commit builded action
+        run: |
+          if git status | grep 'dist/' -q;
+          then
+            git config --global user.email "${AUTHOR_EMAIL}"
+            git config --global user.name "${AUTHOR_NAME}"
+            git add ./dist
+            git commit -m "builded action"
+            git push origin ${{ github.ref }}:${{ github.ref }}   
+          fi
