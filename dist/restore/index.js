@@ -86126,7 +86126,6 @@ var tar_1 = __webpack_require__(7430);
 var core = __webpack_require__(6977);
 var path = __webpack_require__(6928);
 var state_1 = __webpack_require__(3569);
-var yaml_1 = __webpack_require__(1198);
 var utils_1 = __webpack_require__(6185);
 var utils_2 = __webpack_require__(6185);
 process.on("uncaughtException", function (e) { return core.info("warning: " + e.message); });
@@ -86136,16 +86135,18 @@ function restoreCache() {
         return __generator(this, function (_d) {
             switch (_d.label) {
                 case 0:
-                    _d.trys.push([0, 17, , 18]);
+                    _d.trys.push([0, 18, , 19]);
                     return [4 /*yield*/, (0, utils_2.validateInputs)()];
                 case 1:
                     _d.sent();
                     bucket = core.getInput("bucket", { required: true });
-                    cacheListKeys = (0, yaml_1.parse)(core.getInput('cache-list-keys'));
-                    useFallback = false;
-                    _d.label = 2;
+                    return [4 /*yield*/, (0, utils_2.readCacheListKeys)()];
                 case 2:
-                    _d.trys.push([2, 15, , 16]);
+                    cacheListKeys = _d.sent();
+                    useFallback = false;
+                    _d.label = 3;
+                case 3:
+                    _d.trys.push([3, 16, , 17]);
                     // Inputs are re-evaluted before the post action, so we want to store the original values
                     // core.saveState(State.PrimaryKey, key);
                     core.saveState(state_1.State.AccessKey, (0, utils_2.getInput)("accessKey", "AWS_ACCESS_KEY_ID"));
@@ -86155,61 +86156,62 @@ function restoreCache() {
                     core.saveState(state_1.State.CacheListKeys, JSON.stringify(cacheListKeys));
                     mc = (0, utils_2.newMinio)();
                     return [4 /*yield*/, utils.getCompressionMethod()];
-                case 3:
+                case 4:
                     compressionMethod = _d.sent();
                     cacheFileName = utils.getCacheFileName(compressionMethod);
                     restoredKeys = [];
                     _i = 0, cacheListKeys_1 = cacheListKeys;
-                    _d.label = 4;
-                case 4:
-                    if (!(_i < cacheListKeys_1.length)) return [3 /*break*/, 14];
+                    _d.label = 5;
+                case 5:
+                    if (!(_i < cacheListKeys_1.length)) return [3 /*break*/, 15];
                     ck = cacheListKeys_1[_i];
                     core.info("try restore cache for ".concat(ck.path, ": ").concat(ck.key));
                     _b = (_a = path).join;
                     return [4 /*yield*/, utils.createTempDirectory()];
-                case 5:
-                    archivePath = _b.apply(_a, [_d.sent(), cacheFileName]);
-                    _d.label = 6;
                 case 6:
-                    _d.trys.push([6, 12, , 13]);
-                    return [4 /*yield*/, (0, utils_2.findObject)(mc, bucket, ck.key)];
+                    archivePath = _b.apply(_a, [_d.sent(), cacheFileName]);
+                    _d.label = 7;
                 case 7:
+                    _d.trys.push([7, 13, , 14]);
+                    return [4 /*yield*/, (0, utils_2.findObject)(mc, bucket, ck.key)];
+                case 8:
                     _c = _d.sent(), obj = _c.item, matchingKey = _c.matchingKey;
                     restoredKeys.push(ck);
                     core.info("Matching key: ".concat(matchingKey));
                     core.debug("found cache object");
                     core.info("Downloading cache from s3 to ".concat(archivePath, ". bucket: ").concat(bucket, ", object: ").concat(obj.name));
                     return [4 /*yield*/, mc.fGetObject(bucket, obj.name, archivePath)];
-                case 8:
-                    _d.sent();
-                    if (!core.isDebug()) return [3 /*break*/, 10];
-                    return [4 /*yield*/, (0, tar_1.listTar)(archivePath, compressionMethod)];
                 case 9:
                     _d.sent();
-                    _d.label = 10;
+                    if (!core.isDebug()) return [3 /*break*/, 11];
+                    return [4 /*yield*/, (0, tar_1.listTar)(archivePath, compressionMethod)];
                 case 10:
+                    _d.sent();
+                    _d.label = 11;
+                case 11:
                     core.info("Cache Size: ".concat((0, utils_2.formatSize)(obj.size), " (").concat(obj.size, " bytes)"));
                     return [4 /*yield*/, (0, tar_1.extractTar)(archivePath, compressionMethod)];
-                case 11:
+                case 12:
                     _d.sent();
                     core.info("Cache restored from s3 successfully");
-                    return [3 /*break*/, 13];
-                case 12:
+                    return [3 /*break*/, 14];
+                case 13:
                     e_1 = _d.sent();
                     if (e_1.name == "CacheNotFound") {
                         core.info("Cache not found for ".concat(ck.key, ", skipping restore"));
-                        return [3 /*break*/, 13];
+                        return [3 /*break*/, 14];
                     }
                     throw e_1;
-                case 13:
-                    _i++;
-                    return [3 /*break*/, 4];
                 case 14:
-                    core.saveState(state_1.State.RestoredKeys, JSON.stringify(restoredKeys));
-                    return [3 /*break*/, 16];
+                    _i++;
+                    return [3 /*break*/, 5];
                 case 15:
+                    core.saveState(state_1.State.RestoredKeys, JSON.stringify(restoredKeys));
+                    return [3 /*break*/, 17];
+                case 16:
                     e_2 = _d.sent();
                     core.info("Restore s3 cache failed: " + e_2.message);
+                    core.debug("Stack: " + e_2.stack);
                     (0, utils_2.setCacheHitOutput)(false);
                     if (useFallback) {
                         if ((0, utils_2.isGhes)()) {
@@ -86230,13 +86232,13 @@ function restoreCache() {
                             // }
                         }
                     }
-                    return [3 /*break*/, 16];
-                case 16: return [3 /*break*/, 18];
-                case 17:
+                    return [3 /*break*/, 17];
+                case 17: return [3 /*break*/, 19];
+                case 18:
                     e_3 = _d.sent();
                     core.setFailed("[".concat(utils_1.ActionName, "]: ").concat(e_3.message));
-                    return [3 /*break*/, 18];
-                case 18: return [2 /*return*/];
+                    return [3 /*break*/, 19];
+                case 19: return [2 /*return*/];
             }
         });
     });
