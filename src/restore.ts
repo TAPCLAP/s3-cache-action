@@ -4,7 +4,6 @@ import { extractTar, listTar } from "@actions/cache/lib/internal/tar";
 import * as core from "@actions/core";
 import * as path from "path";
 import { State } from "./state";
-import { parse as yamlParse} from 'yaml';
 
 import { ActionName } from "./utils";
 import {
@@ -18,6 +17,7 @@ import {
   setCacheSizeOutput,
   getInput,
   validateInputs,
+  readCacheListKeys,
 } from "./utils";
 
 
@@ -27,7 +27,7 @@ async function restoreCache() {
   try {
     await validateInputs();
     const bucket = core.getInput("bucket", { required: true });
-    const cacheListKeys = yamlParse(core.getInput('cache-list-keys'));
+    const cacheListKeys = await readCacheListKeys();
 
     // const key = core.getInput("key", { required: true });
     // const useFallback = getInputAsBoolean("use-fallback");
@@ -93,6 +93,7 @@ async function restoreCache() {
 
     } catch (e) {
       core.info("Restore s3 cache failed: " + e.message);
+      core.debug("Stack: " + e.stack);
       setCacheHitOutput(false);
       if (useFallback) {
         if (isGhes()) {
