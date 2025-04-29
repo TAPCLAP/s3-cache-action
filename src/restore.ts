@@ -2,6 +2,7 @@ import * as cache from "@actions/cache";
 import * as utils from "@actions/cache/lib/internal/cacheUtils";
 import { extractTar, listTar } from "@actions/cache/lib/internal/tar";
 import * as core from "@actions/core";
+import * as minio from "minio";
 import * as path from "path";
 import { State } from "./state";
 
@@ -18,6 +19,7 @@ import {
   getInput,
   validateInputs,
   readCacheListKeys,
+  cacheKey,
 } from "./utils";
 
 
@@ -49,7 +51,8 @@ async function restoreCache() {
 
       const compressionMethod = await utils.getCompressionMethod();
       const cacheFileName = utils.getCacheFileName(compressionMethod);
-      const restoredKeys = [];
+      const restoredKeys: cacheKey[] = [];
+      const notFoundKeys: cacheKey[] = [];
 
       for (const ck of cacheListKeys) {
         core.info(`try restore cache for ${ck.path}: ${ck.key}`);
@@ -58,37 +61,56 @@ async function restoreCache() {
           cacheFileName
         );
 
+        let obj: minio.BucketItem;
+        let matchingKey: string;
         try {
-            const { item: obj, matchingKey } = await findObject(
+
+          const fo = await findObject(
             mc,
             bucket,
             ck.key
           );
-          restoredKeys.push(ck)
-          core.info(`Matching key: ${matchingKey}`);
-          core.debug("found cache object");
-          core.info(
-            `Downloading cache from s3 to ${archivePath}. bucket: ${bucket}, object: ${obj.name}`
-          );
-          await mc.fGetObject(bucket, obj.name, archivePath);
-    
-          if (core.isDebug()) {
-            await listTar(archivePath, compressionMethod);
-          }
-    
-          core.info(`Cache Size: ${formatSize(obj.size)} (${obj.size} bytes)`);
-    
-          await extractTar(archivePath, compressionMethod);
-          core.info("Cache restored from s3 successfully");
+          obj         = fo.item;
+          matchingKey = fo.matchingKey;
 
         } catch(e) {
           if (e.name == "CacheNotFound") {
+            notFoundKeys.push(ck);
             core.info(`Cache not found for ${ck.key}, skipping restore`);
             continue;
           }
           throw e;
         }
+
+        restoredKeys.push(ck)
+        core.info(`Matching key: ${matchingKey}`);
+        core.debug("found cache object");
+        core.info(
+          `Downloading cache from s3 to ${archivePath}. bucket: ${bucket}, object: ${obj.name}`
+        );
+        await mc.fGetObject(bucket, obj.name, archivePath);
+  
+        if (core.isDebug()) {
+          await listTar(archivePath, compressionMethod);
+        }
+  
+        core.info(`Cache Size: ${formatSize(obj.size)} (${obj.size} bytes)`);
+  
+        await extractTar(archivePath, compressionMethod);
+        core.info("Cache restored from s3 successfully");
+
       }
+
+      core.info(`Restored keys: ${JSON.stringify(restoredKeys, null, 2)}`);
+      core.info(`Not found keys: ${JSON.stringify(notFoundKeys, null, 2)}`);
+      
+      
+      await core.summary
+        .addHeading('s3 restore cache')
+        .addRaw("<details>\n<summary>Restored keys</summary>\n\n```json\n" + JSON.stringify(restoredKeys, null, 2) + "\n```\n</details>\n", true)
+        .addRaw("<details>\n<summary>Not found keys</summary>\n\n```json\n" + JSON.stringify(notFoundKeys, null, 2) + "\n```\n</details>\n", true)
+        .write()
+
       core.saveState(State.RestoredKeys, JSON.stringify(restoredKeys));
 
     } catch (e) {
