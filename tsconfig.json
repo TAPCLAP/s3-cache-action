@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "moduleResolution": "node10",
+    "lib": ["ES2022"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "ignoreDeprecations": "6.0",
+    "noEmit": true,
+    "types": ["node", "jest"],
+    "baseUrl": ".",
+    "paths": {
+      "@actions/cache/lib/internal/cacheUtils": [
+        "node_modules/@actions/cache/lib/internal/cacheUtils"
+      ],
+      "@actions/cache/lib/internal/tar": [
+        "node_modules/@actions/cache/lib/internal/tar"
+      ],
+      "@actions/cache/lib/internal/constants": [
+        "node_modules/@actions/cache/lib/internal/constants"
+      ]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}

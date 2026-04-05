@@ -20,10 +20,16 @@ import {
   validateInputs,
   readCacheListKeys,
   cacheKey,
+  CacheNotFound,
 } from "./utils";
 
+function errMsg(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
 
-process.on("uncaughtException", (e) => core.info("warning: " + e.message));
+process.on("uncaughtException", (e: unknown) =>
+  core.info("warning: " + errMsg(e))
+);
 
 async function restoreCache() {
   try {
@@ -73,8 +79,8 @@ async function restoreCache() {
           obj         = fo.item;
           matchingKey = fo.matchingKey;
 
-        } catch(e) {
-          if (e.name == "CacheNotFound") {
+        } catch (e: unknown) {
+          if (e instanceof CacheNotFound) {
             notFoundKeys.push(ck);
             core.info(`Cache not found for ${ck.key}, skipping restore`);
             continue;
@@ -85,10 +91,14 @@ async function restoreCache() {
         restoredKeys.push(ck)
         core.info(`Matching key: ${matchingKey}`);
         core.debug("found cache object");
+        const objectName = obj.name;
+        if (!objectName) {
+          throw new Error("S3 object has no name");
+        }
         core.info(
-          `Downloading cache from s3 to ${archivePath}. bucket: ${bucket}, object: ${obj.name}`
+          `Downloading cache from s3 to ${archivePath}. bucket: ${bucket}, object: ${objectName}`
         );
-        await mc.fGetObject(bucket, obj.name, archivePath);
+        await mc.fGetObject(bucket, objectName, archivePath);
   
         if (core.isDebug()) {
           await listTar(archivePath, compressionMethod);
@@ -113,9 +123,9 @@ async function restoreCache() {
 
       core.saveState(State.RestoredKeys, JSON.stringify(restoredKeys));
 
-    } catch (e) {
-      core.info("Restore s3 cache failed: " + e.message);
-      core.debug("Stack: " + e.stack);
+    } catch (e: unknown) {
+      core.info("Restore s3 cache failed: " + errMsg(e));
+      core.debug("Stack: " + (e instanceof Error ? e.stack : ""));
       setCacheHitOutput(false);
       if (useFallback) {
         if (isGhes()) {
@@ -136,8 +146,8 @@ async function restoreCache() {
         }
       }
     }
-  } catch (e) {
-    core.setFailed(`[${ActionName}]: ${e.message}`);
+  } catch (e: unknown) {
+    core.setFailed(`[${ActionName}]: ${errMsg(e)}`);
   }
 }
 

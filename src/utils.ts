@@ -19,7 +19,7 @@ export const ActionName = "s3-cache-action";
 
 
 export class CacheNotFound extends Error {
-  constructor(message) {
+  constructor(message: string) {
       super(message);
       this.name = "CacheNotFound";
   }
@@ -213,8 +213,10 @@ export async function validateInputs() {
   if (cacheListKeys !== '') {
     try {
       yamlParse(cacheListKeys);
-    } catch(e) {
-      throw new Error(`Parse error from input 'cache-list-keys': ${e.message}`);
+    } catch (e: unknown) {
+      throw new Error(
+        `Parse error from input 'cache-list-keys': ${e instanceof Error ? e.message : String(e)}`
+      );
     }
   }
 
@@ -224,8 +226,10 @@ export async function validateInputs() {
     }
     try {
       yamlParse(readFileSync(cacheListKeysFile, 'utf8'))
-    } catch(e) {
-      throw new Error(`Parse error from input 'cache-list-keys-file': ${e.message}`);
+    } catch (e: unknown) {
+      throw new Error(
+        `Parse error from input 'cache-list-keys-file': ${e instanceof Error ? e.message : String(e)}`
+      );
     }
   }
 }
@@ -321,7 +325,7 @@ export async function saveCache(standalone: boolean) {
         core.info("Cache saved to s3 successfully");
       }
 
-    } catch (e) {
+    } catch (e: unknown) {
       core.info("Error: " + JSON.stringify(e));
       if (useFallback) {
         if (isGhes()) {
@@ -333,10 +337,15 @@ export async function saveCache(standalone: boolean) {
         }
       } else {
         core.debug("skipped fallback cache");
-        core.warning("Save s3 cache failed: " + e.message);
+        core.warning(
+          "Save s3 cache failed: " +
+            (e instanceof Error ? e.message : String(e))
+        );
       }
     }
-  } catch (e) {
-    core.setFailed(`[${ActionName}]: ${e.message}`);
+  } catch (e: unknown) {
+    core.setFailed(
+      `[${ActionName}]: ${e instanceof Error ? e.message : String(e)}`
+    );
   }
 }
