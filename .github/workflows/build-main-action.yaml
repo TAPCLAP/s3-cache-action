@@ -1,31 +1,40 @@
 name: build main action
+
+# Запускается только после успешного завершения E2E на push в main
+# (см. .github/workflows/e2e-test.yaml).
+on:
+  workflow_run:
+    workflows:
+      - E2E test (S3 save + restore)
+      - tests
+    types:
+      - completed
+
 concurrency:
   group: build-main-action
-on:
-  push:
-    branches:
-      - main
-    paths:
-      - src/**/*
-      - package*.json
-      - src/*.js
-      - .github/workflows/build-main-action.yaml
+  cancel-in-progress: true
 
 permissions:
   contents: write
 
 env:
   AUTHOR_EMAIL: admin+github-actions@tapclap.com
-  AUTHOR_NAME: 'Github Actions'
+  AUTHOR_NAME: "Github Actions"
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.event == 'push'
+
     steps:
       - uses: actions/checkout@main
+
       - uses: actions/setup-node@main
         with:
-          node-version: 20
+          node-version: 24
 
       - name: node modules
         run: npm ci
@@ -41,5 +50,5 @@ jobs:
             git config --global user.name "${AUTHOR_NAME}"
             git add ./dist
             git commit -m "builded action"
-            git push origin ${{ github.ref }}:${{ github.ref }}   
+            git push origin "HEAD:refs/heads/${{ github.event.workflow_run.head_branch }}"
           fi
