@@ -29831,7 +29831,7 @@ function getInput(key, envKey) {
     return result;
 }
 /**
- * Builds S3Client: default AWS endpoint, or custom HTTP(S) URL for MinIO / SeaweedFS / etc.
+ * Builds S3Client: default AWS endpoint, or custom HTTP(S) URL for S3 / etc.
  */
 function newS3Client({ accessKey, secretKey, sessionToken, region: regionOpt, } = {}) {
     const host = core.getInput("endpoint") || "s3.amazonaws.com";
@@ -29927,12 +29927,12 @@ async function existObject(client, bucket, key) {
     return exactMatch.length > 0;
 }
 async function listObjects(client, bucket, prefix) {
-    const deadline = Date.now() + 10_000;
+    const deadline = Date.now() + 60_000;
     const out = [];
     let continuationToken;
     do {
         if (Date.now() > deadline) {
-            throw new Error("list objects no result after 10 seconds");
+            throw new Error("list objects no result after 60 seconds");
         }
         const resp = await client.send(new client_s3_1.ListObjectsV2Command({
             Bucket: bucket,
