@@ -2,7 +2,6 @@ import * as cache from "@actions/cache";
 import * as utils from "@actions/cache/lib/internal/cacheUtils";
 import { extractTar, listTar } from "@actions/cache/lib/internal/tar";
 import * as core from "@actions/core";
-import * as minio from "minio";
 import * as path from "path";
 import { State } from "./state";
 
@@ -13,7 +12,9 @@ import {
   getInputAsArray,
   getInputAsBoolean,
   isGhes,
-  newMinio,
+  newS3Client,
+  getObjectToFile,
+  S3ListedObject,
   setCacheHitOutput,
   setCacheSizeOutput,
   getInput,
@@ -53,7 +54,7 @@ async function restoreCache() {
       core.saveState(State.Region, getInput("region", "AWS_REGION"));
       core.saveState(State.CacheListKeys, JSON.stringify(cacheListKeys));
 
-      const mc = newMinio();
+      const client = newS3Client();
 
       const compressionMethod = await utils.getCompressionMethod();
       const cacheFileName = utils.getCacheFileName(compressionMethod);
@@ -67,12 +68,12 @@ async function restoreCache() {
           cacheFileName
         );
 
-        let obj: minio.BucketItem;
+        let obj: S3ListedObject;
         let matchingKey: string;
         try {
 
           const fo = await findObject(
-            mc,
+            client,
             bucket,
             ck.key
           );
@@ -98,7 +99,7 @@ async function restoreCache() {
         core.info(
           `Downloading cache from s3 to ${archivePath}. bucket: ${bucket}, object: ${objectName}`
         );
-        await mc.fGetObject(bucket, objectName, archivePath);
+        await getObjectToFile(client, bucket, objectName, archivePath);
   
         if (core.isDebug()) {
           await listTar(archivePath, compressionMethod);

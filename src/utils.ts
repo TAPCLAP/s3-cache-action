@@ -1,14 +1,21 @@
 import { CompressionMethod } from "@actions/cache/lib/internal/constants";
 import * as utils from "@actions/cache/lib/internal/cacheUtils";
 import * as core from "@actions/core";
-import * as minio from "minio";
+import {
+  GetObjectCommand,
+  ListObjectsV2Command,
+  PutObjectCommand,
+  S3Client,
+  type S3ClientConfig,
+} from "@aws-sdk/client-s3";
 import { State } from "./state";
 import * as path from "path";
-import {createTar, listTar} from "@actions/cache/lib/internal/tar";
+import { createTar, listTar } from "@actions/cache/lib/internal/tar";
 import * as cache from "@actions/cache";
-import { parse as yamlParse} from 'yaml';
-import { existsSync, readFileSync } from 'fs';
-import * as os from 'os';
+import { parse as yamlParse } from "yaml";
+import { createReadStream, createWriteStream, existsSync, readFileSync, statSync } from "fs";
+import * as os from "os";
+import { pipeline } from "stream/promises";
 
 export type cacheKey = {
   key: string;
@@ -43,26 +50,94 @@ export function getInput(key: string, envKey?: string) {
   return result;
 }
 
-export function newMinio({
+/** One object from ListObjectsV2 (`Key` → `name`, `Size` → `size`) for the rest of the action. */
+export type S3ListedObject = {
+  name: string;
+  size: number;
+};
+
+/**
+ * Builds S3Client: default AWS endpoint, or custom HTTP(S) URL for S3 / etc.
+ */
+export function newS3Client({
   accessKey,
   secretKey,
   sessionToken,
-  region,
+  region: regionOpt,
 }: {
   accessKey?: string;
   secretKey?: string;
   sessionToken?: string;
   region?: string;
-} = {}) {
-  return new minio.Client({
-    endPoint: core.getInput("endpoint"),
-    port: getInputAsInt("port"),
-    useSSL: !getInputAsBoolean("insecure"),
-    accessKey: accessKey ?? getInput("accessKey", "AWS_ACCESS_KEY_ID"),
-    secretKey: secretKey ?? getInput("secretKey", "AWS_SECRET_ACCESS_KEY"),
-    sessionToken: sessionToken ?? getInput("sessionToken", "AWS_SESSION_TOKEN"),
-    region: region ?? getInput("region", "AWS_REGION"),
-  });
+} = {}): S3Client {
+  const host = core.getInput("endpoint") || "s3.amazonaws.com";
+  const port = getInputAsInt("port");
+  const useSSL = !getInputAsBoolean("insecure");
+  const region =
+    (regionOpt ?? getInput("region", "AWS_REGION")) || "us-east-1";
+
+  const st =
+    sessionToken ?? getInput("sessionToken", "AWS_SESSION_TOKEN");
+  const credentials = {
+    accessKeyId: accessKey ?? getInput("accessKey", "AWS_ACCESS_KEY_ID"),
+    secretAccessKey: secretKey ?? getInput("secretKey", "AWS_SECRET_ACCESS_KEY"),
+    ...(st ? { sessionToken: st } : {}),
+  };
+
+  const config: S3ClientConfig = {
+    region,
+    credentials,
+  };
+
+  const isDefaultAws =
+    host === "s3.amazonaws.com" && port === undefined && useSSL;
+
+  if (!isDefaultAws) {
+    const scheme = useSSL ? "https" : "http";
+    const defaultPort = useSSL ? 443 : 80;
+    const effectivePort = port ?? defaultPort;
+    const portSuffix =
+      effectivePort !== defaultPort ? `:${effectivePort}` : "";
+    config.endpoint = `${scheme}://${host}${portSuffix}`;
+    config.forcePathStyle = true;
+  }
+
+  return new S3Client(config);
+}
+
+export async function getObjectToFile(
+  client: S3Client,
+  bucket: string,
+  key: string,
+  filePath: string
+): Promise<void> {
+  const resp = await client.send(
+    new GetObjectCommand({ Bucket: bucket, Key: key })
+  );
+  if (!resp.Body) {
+    throw new Error("S3 GetObject returned empty body");
+  }
+  await pipeline(
+    resp.Body as NodeJS.ReadableStream,
+    createWriteStream(filePath)
+  );
+}
+
+export async function putObjectFromFile(
+  client: S3Client,
+  bucket: string,
+  key: string,
+  filePath: string
+): Promise<void> {
+  const size = statSync(filePath).size;
+  await client.send(
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      Body: createReadStream(filePath),
+      ContentLength: size,
+    })
+  );
 }
 
 export function getInputAsBoolean(
@@ -116,19 +191,19 @@ export function setCacheSizeOutput(cacheSize: number): void {
 }
 
 type FindObjectResult = {
-  item: minio.BucketItem;
+  item: S3ListedObject;
   matchingKey: string;
 };
 
 export async function findObject(
-  mc: minio.Client,
+  client: S3Client,
   bucket: string,
   key: string
 ): Promise<FindObjectResult> {
   core.debug("Key: " + JSON.stringify(key));
 
   core.debug(`Finding exact macth for: ${key}`);
-  const exactMatch = await listObjects(mc, bucket, key);
+  const exactMatch = await listObjects(client, bucket, key);
   core.debug(`Found ${JSON.stringify(exactMatch, null, 2)}`);
   if (exactMatch.length) {
     const result = { item: exactMatch[0], matchingKey: key };
@@ -140,45 +215,51 @@ export async function findObject(
 }
 
 export async function existObject(
-  mc: minio.Client,
+  client: S3Client,
   bucket: string,
   key: string
 ): Promise<boolean> {
   core.debug("Check exist key: " + JSON.stringify(key));
   core.debug(`Finding exact macth for: ${key}`);
-  const exactMatch = await listObjects(mc, bucket, key);
+  const exactMatch = await listObjects(client, bucket, key);
   core.debug(`Found ${JSON.stringify(exactMatch, null, 2)}`);
   return exactMatch.length > 0;
 }
 
-export function listObjects(
-  mc: minio.Client,
+export async function listObjects(
+  client: S3Client,
   bucket: string,
   prefix: string
-): Promise<minio.BucketItem[]> {
-  return new Promise((resolve, reject) => {
-    const h = mc.listObjectsV2(bucket, prefix, true);
-    const r: minio.BucketItem[] = [];
-    let resolved = false;
-    const timeout = setTimeout(() => {
-      if (!resolved)
-        reject(new Error("list objects no result after 10 seconds"));
-    }, 10000);
+): Promise<S3ListedObject[]> {
+  const deadline = Date.now() + 60_000;
+  const out: S3ListedObject[] = [];
+  let continuationToken: string | undefined;
 
-    h.on("data", (obj) => {
-      r.push(obj);
-    });
-    h.on("error", (e) => {
-      resolved = true;
-      reject(e);
-      clearTimeout(timeout)
-    });
-    h.on("end", () => {
-      resolved = true;
-      resolve(r);
-      clearTimeout(timeout)
-    });
-  });
+  do {
+    if (Date.now() > deadline) {
+      throw new Error("list objects no result after 60 seconds");
+    }
+
+    const resp = await client.send(
+      new ListObjectsV2Command({
+        Bucket: bucket,
+        Prefix: prefix,
+        ContinuationToken: continuationToken,
+      })
+    );
+
+    for (const o of resp.Contents ?? []) {
+      if (o.Key != null) {
+        out.push({ name: o.Key, size: Number(o.Size ?? 0) });
+      }
+    }
+
+    continuationToken = resp.IsTruncated
+      ? resp.NextContinuationToken
+      : undefined;
+  } while (continuationToken);
+
+  return out;
 }
 
 // export function saveMatchedKey(matchedKey: string) {
@@ -262,7 +343,7 @@ export async function saveCache(standalone: boolean) {
     // const paths = getInputAsArray("path");
 
     try {
-      const mc = newMinio({
+      const client = newS3Client({
         // Inputs are re-evaluted before the post action, so we want the original keys & tokens
         accessKey: standalone ? getInput("accessKey", "AWS_ACCESS_KEY_ID") : core.getState(State.AccessKey),
         secretKey: standalone ? getInput("secretKey", "AWS_SECRET_ACCESS_KEY") : core.getState(State.SecretKey),
@@ -285,8 +366,7 @@ export async function saveCache(standalone: boolean) {
         core.debug(`try save cache for ${ck.path}: ${ck.key}`);
 
         if (standalone) {
-          const a = await existObject(mc, bucket, ck.key);
-          if (await existObject(mc, bucket, ck.key)) {
+          if (await existObject(client, bucket, ck.key)) {
             core.info(`Cache already exists for ${ck.key}, skipping upload`);
             continue;
           }
@@ -321,7 +401,7 @@ export async function saveCache(standalone: boolean) {
           object = object.replace(/\\/g, '/');
         }
         core.info(`Uploading tar to s3. Bucket: ${bucket}, Object: ${object}`);
-        await mc.fPutObject(bucket, object, archivePath, {});
+        await putObjectFromFile(client, bucket, object, archivePath);
         core.info("Cache saved to s3 successfully");
       }
 
