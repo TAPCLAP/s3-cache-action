@@ -1,0 +1,105 @@
+name: E2E test (S3 save + restore)
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - main
+    paths:
+      - src/**/*
+      - package*.json
+      - src/*.js
+      - hack/ci-scripts/**
+      - .github/workflows/build-main-action.yaml
+      - .github/workflows/e2e-test.yaml
+
+
+concurrency:
+  group: e2e-test-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AWS_ACCESS_KEY_ID: ci-access-key
+  AWS_SECRET_ACCESS_KEY: ci-secret-key
+  S3_PORT: "8333"
+  S3_BUCKET: integration-ci
+
+jobs:
+  save-then-restore:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@main
+
+      - name: Start SeaweedFS + create bucket
+        env:
+          AWS_ACCESS_KEY_ID: ${{ env.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          S3_PORT: ${{ env.S3_PORT }}
+          S3_BUCKET: ${{ env.S3_BUCKET }}
+        run: bash hack/ci-scripts/s3_up.sh
+
+      - name: Setup Node
+        uses: actions/setup-node@main
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Build action (dist/)
+        run: npm ci && npm run build
+
+      - name: Prepare local fixtures
+        run: |
+          mkdir -p cache-test/1 cache-test/2
+          echo "integration-a-${{ github.run_id }}-${{ github.run_attempt }}" > cache-test/1/data.txt
+          echo "integration-b-${{ github.run_id }}-${{ github.run_attempt }}" > cache-test/2/data.txt
+
+      - name: Save cache to SeaweedFS (S3 API)
+        uses: ./save
+        with:
+          endpoint: 127.0.0.1
+          port: ${{ env.S3_PORT }}
+          insecure: "true"
+          accessKey: ${{ env.AWS_ACCESS_KEY_ID }}
+          secretKey: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          region: us-east-1
+          bucket: ${{ env.S3_BUCKET }}
+          cache-list-keys: |
+            - key: integration/${{ github.run_id }}/a
+              path: ./cache-test/1
+            - key: integration/${{ github.run_id }}/b
+              path: ./cache-test/2
+
+      - name: Remove local files (simulate clean workspace)
+        run: rm -rf cache-test
+
+      - name: Restore cache from SeaweedFS
+        uses: ./restore
+        with:
+          endpoint: 127.0.0.1
+          port: ${{ env.S3_PORT }}
+          insecure: "true"
+          accessKey: ${{ env.AWS_ACCESS_KEY_ID }}
+          secretKey: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          region: us-east-1
+          bucket: ${{ env.S3_BUCKET }}
+          cache-list-keys: |
+            - key: integration/${{ github.run_id }}/a
+              path: ./cache-test/1
+            - key: integration/${{ github.run_id }}/b
+              path: ./cache-test/2
+
+      - name: Verify restored content
+        run: |
+          set -eux
+          test -f cache-test/1/data.txt
+          test -f cache-test/2/data.txt
+          grep -q "integration-a-${{ github.run_id }}-${{ github.run_attempt }}" cache-test/1/data.txt
+          grep -q "integration-b-${{ github.run_id }}-${{ github.run_attempt }}" cache-test/2/data.txt
+          echo "OK: SeaweedFS (weed mini) save → restore round-trip succeeded"
+
+      - name: Stop SeaweedFS
+        if: always()
+        run: docker rm -f seaweed 2>/dev/null || true

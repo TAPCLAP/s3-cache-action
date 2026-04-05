@@ -1,0 +1,43 @@
+name: tests
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - main
+    paths:
+      - src/**/*
+      - package*.json
+      - src/*.js
+      - hack/ci-scripts/**
+      - .github/workflows/build-main-action.yaml
+      - .github/workflows/e2e-test.yaml
+
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  save-then-restore:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@main
+
+      - name: Setup Node
+        uses: actions/setup-node@main
+        with:
+          node-version: 24
+          cache: npm
+      
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm run test
+      
+      - name: test build
+        run: npm run build
